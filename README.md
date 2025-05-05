@@ -33,13 +33,43 @@ python3 setup.py install
 
 
 ## TCP/IP Model
-<p align="left" href="https://cyberthreatdefence.com/"> 
-<a href="https://cyberthreatdefence.com/"><picture><img width="15%" height="auto" src="./assets/tcp-ip-model.png" height="175px" alt="TCP-IP-MOdel"/></picture></a>
-</p>
-
-| Layer             | Function                                                                                                                               | Protocols                                     |
-|-------------------|----------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------|
-| Application Layer | Provides network services directly to end-user applications. It handles application-level protocols and interfaces with user software. | HTTP, FTP, SMTP, DNS, RIP, SNMP               |
-| Transport Layer   | Manages end-to-end communication and data transfer reliability. It is responsible for error recovery, flow control, and ensuring data integrity. | TCP, UDP                                      |
-| Internet Layer    | Handles logical addressing and routing of data packets across the network. It determines the best path for data from the source to the destination. | IP, ARP, ICMP, IGMP                             |
-| Network Access Layer | Manages physical network hardware and data framing. It handles the communication between devices on the same network segment and provides error detection. | Ethernet, PPP                                 |
+<table>
+  <tr>
+    <td style="width: 25%; vertical-align: top;">
+      <img src="./assets/tcp-ip-model.png" width="50%" height="auto" alt="TCP-IP-Model"/>
+    </td>
+    <td style="width: 75%;">
+      <table border="1">
+        <thead>
+          <tr>
+            <th>Layer</th>
+            <th>Function</th>
+            <th>Protocols</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Application Layer</td>
+            <td>Provides network services directly to end-user applications. It handles application-level protocols and interfaces with user software.</td>
+            <td>HTTP, FTP, SMTP, DNS, RIP, SNMP</td>
+          </tr>
+          <tr>
+            <td>Transport Layer</td>
+            <td>Manages end-to-end communication and data transfer reliability. It is responsible for error recovery, flow control, and ensuring data integrity.</td>
+            <td>TCP, UDP</td>
+          </tr>
+          <tr>
+            <td>Internet Layer</td>
+            <td>Handles logical addressing and routing of data packets across the network. It determines the best path for data from the source to the destination.</td>
+            <td>IP, ARP, ICMP, IGMP</td>
+          </tr>
+          <tr>
+            <td>Network Access Layer</td>
+            <td>Manages physical network hardware and data framing. It handles the communication between devices on the same network segment and provides error detection.</td>
+            <td>Ethernet, PPP</td>
+          </tr>
+        </tbody>
+      </table>
+    </td>
+  </tr>
+</table>
