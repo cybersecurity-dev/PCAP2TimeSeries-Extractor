@@ -9,8 +9,9 @@ import networkx as nx
 import matplotlib.pyplot as plt
 
 import dash
-from dash import dcc, html
+from dash import dcc, html, Input, Output
 import plotly.graph_objects as go
+
 
 def is_private_ip(ip):
     """Check if an IP address is a private (local) IP."""
@@ -33,11 +34,19 @@ def should_include_pair(src_ip, dst_ip, packet_filter):
     else:  # "all"
         return True
 
-def create_plotly_dash_graph(G, pos, packet_filter):
-    """Create an interactive Plotly Dash graph from a NetworkX graph."""
+def create_graph_for_filter(edge_weights, packet_filter):
+    """Create a NetworkX graph for a specific packet filter."""
+    G = nx.DiGraph()
+    for (src_ip, dst_ip), data in edge_weights.items():
+        if should_include_pair(src_ip, dst_ip, packet_filter):
+            G.add_edge(src_ip, dst_ip, weight=data['packets'])
+    return G
+
+def create_plotly_figure(G, pos):
+    """Create a Plotly figure from a NetworkX graph."""
     # Extract node positions
-    node_x = [pos[node][0] for node in G.nodes()]
-    node_y = [pos[node][1] for node in G.nodes()]
+    node_x = [pos[node][0] for node in G.nodes()] if G.nodes() else []
+    node_y = [pos[node][1] for node in G.nodes()] if G.nodes() else []
     node_text = [node for node in G.nodes()]
     
     # Create node trace
@@ -77,22 +86,47 @@ def create_plotly_dash_graph(G, pos, packet_filter):
     # Create the figure
     fig = go.Figure(data=[edge_trace, node_trace],
                     layout=go.Layout(
-                        title=f'IP Communication Graph (Filter: {packet_filter})',
+                        title='IP Communication Graph',
                         showlegend=False,
                         hovermode='closest',
                         margin=dict(b=20, l=5, r=5, t=40),
                         xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
                         yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)
                     ))
-    
-    # Create the Dash app
+    return fig
+
+def create_plotly_dash_graph(graphs, positions):
+    """Create an interactive Plotly Dash dashboard with a filter dropdown."""
     app = dash.Dash(__name__)
+    
+    # Define the layout with a dropdown and graph
     app.layout = html.Div([
-        dcc.Graph(figure=fig)
+        html.H1("IP Communication Graph"),
+        dcc.Dropdown(
+            id='filter-dropdown',
+            options=[
+                {'label': 'All', 'value': 'all'},
+                {'label': 'External', 'value': 'external'},
+                {'label': 'Internal', 'value': 'internal'}
+            ],
+            value='all',  # Default value
+            style={'width': '50%'}
+        ),
+        dcc.Graph(id='graph')
     ])
     
-    # Run the Dash server using the updated method
-    print("Starting Plotly Dash server. Open http://127.0.0.1:8050 in your browser to view the interactive graph.")
+    # Define callback to update the graph based on the dropdown selection
+    @app.callback(
+        Output('graph', 'figure'),
+        Input('filter-dropdown', 'value')
+    )
+    def update_graph(selected_filter):
+        G = graphs[selected_filter]
+        pos = positions[selected_filter]
+        return create_plotly_figure(G, pos)
+    
+    # Run the Dash server
+    print("Starting Plotly Dash server. Open http://127.0.0.1:8050 in your browser to view the interactive dashboard.")
     app.run(debug=False)
 
 def process_pcap(pcap_file, packet_filter="all"):
@@ -196,18 +230,18 @@ def process_pcap(pcap_file, packet_filter="all"):
     
     print(f"Summary of all IP-to-IP communication pairs has been saved as '{summary_csv}'.")
     
-    # Create the IP communication graph (filtered)
-    G = nx.DiGraph()
+    # Create graphs for all filter options
+    graphs = {}
+    positions = {}
+    for filter_option in ["all", "external", "internal"]:
+        G = create_graph_for_filter(edge_weights, filter_option)
+        graphs[filter_option] = G
+        positions[filter_option] = nx.spring_layout(G, k=1.5, iterations=50) if G.number_of_nodes() > 0 else {}
     
-    # Add edges with weights for the graph, but only for pairs that match the filter
-    for (src_ip, dst_ip), data in edge_weights.items():
-        if should_include_pair(src_ip, dst_ip, packet_filter):
-            G.add_edge(src_ip, dst_ip, weight=data['packets'])
+    # Generate the static SVG graph (using the command-line packet_filter)
+    G = graphs[packet_filter]
+    pos = positions[packet_filter]
     
-    # Compute positions for both graphs
-    pos = nx.spring_layout(G, k=1.5, iterations=50)
-    
-    # Generate the static SVG graph
     plt.figure(figsize=(15, 12))
     nx.draw_networkx_nodes(G, pos, node_color='lightblue', node_size=400, alpha=0.8)
     
@@ -233,18 +267,15 @@ def process_pcap(pcap_file, packet_filter="all"):
     
     print(f"Static IP communication graph has been saved as '{graph_output}' (filter: {packet_filter}).")
     
-    # Generate the interactive Plotly Dash graph
-    if G.number_of_nodes() > 0:  # Only create the Dash app if there are nodes to display
-        create_plotly_dash_graph(G, pos, packet_filter)
-    else:
-        print(f"No nodes to display in the Plotly Dash graph (filter: {packet_filter}).")
+    # Generate the interactive Plotly Dash dashboard
+    create_plotly_dash_graph(graphs, positions)
 
 if __name__ == "__main__":
     # Set up argument parser for command-line arguments
     parser = argparse.ArgumentParser(description="Extract IP-to-IP communication from a PCAP file.")
     parser.add_argument("pcap_file", help="Path to the PCAP file")
     parser.add_argument("-packet_filter", choices=["internal", "external", "all"], default="all",
-                        help="Filter for individual CSV files and graph: 'internal' (both IPs private), 'external' (at least one IP public), 'all' (no filter)")
+                        help="Filter for individual CSV files and static graph: 'internal' (both IPs private), 'external' (at least one IP public), 'all' (no filter)")
     
     args = parser.parse_args()
     
