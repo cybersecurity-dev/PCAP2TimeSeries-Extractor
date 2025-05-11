@@ -12,7 +12,6 @@ import dash
 from dash import dcc, html, Input, Output
 import plotly.graph_objects as go
 
-
 def is_private_ip(ip):
     """Check if an IP address is a private (local) IP."""
     try:
@@ -34,6 +33,28 @@ def should_include_pair(src_ip, dst_ip, packet_filter):
     else:  # "all"
         return True
 
+def process_pcap_file(pcap_file):
+    """Process a PCAP file and return edge weights."""
+    packets = rdpcap(pcap_file)
+    edge_weights = defaultdict(lambda: {'packets': 0, 'bytes': 0})
+    
+    # Process each packet
+    for pkt in packets:
+        if IP in pkt:
+            src_ip = pkt[IP].src
+            dst_ip = pkt[IP].dst
+            timestamp = pkt.time
+            packet_size = len(pkt)
+            
+            # Increment edge weight for the directed edge (src_ip -> dst_ip)
+            edge_weights[(src_ip, dst_ip)]['packets'] += 1
+            edge_weights[(src_ip, dst_ip)]['bytes'] += packet_size
+            
+            # Create a tuple for the IP pair (sorted for individual CSVs)
+            ip_pair = tuple(sorted([src_ip, dst_ip]))
+            
+    return edge_weights
+
 def create_graph_for_filter(edge_weights, packet_filter):
     """Create a NetworkX graph for a specific packet filter."""
     G = nx.DiGraph()
@@ -44,12 +65,10 @@ def create_graph_for_filter(edge_weights, packet_filter):
 
 def create_plotly_figure(G, pos):
     """Create a Plotly figure from a NetworkX graph."""
-    # Extract node positions
     node_x = [pos[node][0] for node in G.nodes()] if G.nodes() else []
     node_y = [pos[node][1] for node in G.nodes()] if G.nodes() else []
     node_text = [node for node in G.nodes()]
     
-    # Create node trace
     node_trace = go.Scatter(
         x=node_x, y=node_y,
         mode='markers+text',
@@ -63,7 +82,6 @@ def create_plotly_figure(G, pos):
         )
     )
     
-    # Extract edge positions
     edge_x = []
     edge_y = []
     edge_text = []
@@ -74,7 +92,6 @@ def create_plotly_figure(G, pos):
         edge_y.extend([y0, y1, None])
         edge_text.append(f"Packets: {edge[2]['weight']}")
     
-    # Create edge trace
     edge_trace = go.Scatter(
         x=edge_x, y=edge_y,
         line=dict(width=1, color='gray'),
@@ -83,7 +100,6 @@ def create_plotly_figure(G, pos):
         mode='lines'
     )
     
-    # Create the figure
     fig = go.Figure(data=[edge_trace, node_trace],
                     layout=go.Layout(
                         title='IP Communication Graph',
@@ -95,47 +111,13 @@ def create_plotly_figure(G, pos):
                     ))
     return fig
 
-def create_plotly_dash_graph(graphs, positions):
-    """Create an interactive Plotly Dash dashboard with a filter dropdown."""
-    app = dash.Dash(__name__)
-    
-    # Define the layout with a dropdown and graph
-    app.layout = html.Div([
-        html.H1("IP Communication Graph"),
-        dcc.Dropdown(
-            id='filter-dropdown',
-            options=[
-                {'label': 'All', 'value': 'all'},
-                {'label': 'External', 'value': 'external'},
-                {'label': 'Internal', 'value': 'internal'}
-            ],
-            value='all',  # Default value
-            style={'width': '50%'}
-        ),
-        dcc.Graph(id='graph')
-    ])
-    
-    # Define callback to update the graph based on the dropdown selection
-    @app.callback(
-        Output('graph', 'figure'),
-        Input('filter-dropdown', 'value')
-    )
-    def update_graph(selected_filter):
-        G = graphs[selected_filter]
-        pos = positions[selected_filter]
-        return create_plotly_figure(G, pos)
-    
-    # Run the Dash server
-    print("Starting Plotly Dash server. Open http://127.0.0.1:8050 in your browser to view the interactive dashboard.")
-    app.run(debug=False)
-
-def process_pcap(pcap_file, packet_filter="all"):
+def process_pcap(pcap_file, packet_filter, pcap_dir):
     # Validate packet_filter
     valid_filters = ["internal", "external", "all"]
     if packet_filter not in valid_filters:
         raise ValueError(f"Invalid packet_filter value. Must be one of {valid_filters}")
     
-    # Read the PCAP file
+    # Process the specified PCAP file for static outputs
     packets = rdpcap(pcap_file)
     
     # Dictionary to store IP pair communications for individual CSVs
@@ -230,22 +212,18 @@ def process_pcap(pcap_file, packet_filter="all"):
     
     print(f"Summary of all IP-to-IP communication pairs has been saved as '{summary_csv}'.")
     
-    # Create graphs for all filter options
-    graphs = {}
-    positions = {}
-    for filter_option in ["all", "external", "internal"]:
-        G = create_graph_for_filter(edge_weights, filter_option)
-        graphs[filter_option] = G
-        positions[filter_option] = nx.spring_layout(G, k=1.5, iterations=50) if G.number_of_nodes() > 0 else {}
+    # Create the static SVG graph (using the command-line packet_filter)
+    G = nx.DiGraph()
+    for (src_ip, dst_ip), data in edge_weights.items():
+        if should_include_pair(src_ip, dst_ip, packet_filter):
+            G.add_edge(src_ip, dst_ip, weight=data['packets'])
     
-    # Generate the static SVG graph (using the command-line packet_filter)
-    G = graphs[packet_filter]
-    pos = positions[packet_filter]
+    pos = nx.spring_layout(G, k=1.5, iterations=50) if G.number_of_nodes() > 0 else {}
     
     plt.figure(figsize=(15, 12))
     nx.draw_networkx_nodes(G, pos, node_color='lightblue', node_size=400, alpha=0.8)
     
-    if G.edges(data=True):  # Check if there are edges to avoid division by zero
+    if G.edges(data=True):
         edge_widths = [0.5 + 2 * (d['weight'] / max([d['weight'] for _, _, d in G.edges(data=True)])) for _, _, d in G.edges(data=True)]
     else:
         edge_widths = []
@@ -267,17 +245,80 @@ def process_pcap(pcap_file, packet_filter="all"):
     
     print(f"Static IP communication graph has been saved as '{graph_output}' (filter: {packet_filter}).")
     
-    # Generate the interactive Plotly Dash dashboard
-    create_plotly_dash_graph(graphs, positions)
+    # List all PCAP files in the specified directory
+    pcap_files = [f for f in os.listdir(pcap_dir) if f.endswith('.pcap')]
+    if not pcap_files:
+        print(f"No PCAP files found in directory '{pcap_dir}'. Exiting.")
+        return
+    
+    # Precompute graphs for all PCAP files and filter combinations
+    data_dict = {}
+    for pcap_file in pcap_files:
+        pcap_path = os.path.join(pcap_dir, pcap_file)
+        edge_weights = process_pcap_file(pcap_path)
+        
+        # Store graphs and positions for each filter
+        graphs = {}
+        positions = {}
+        for filter_option in ["all", "external", "internal"]:
+            G = create_graph_for_filter(edge_weights, filter_option)
+            graphs[filter_option] = G
+            positions[filter_option] = nx.spring_layout(G, k=1.5, iterations=50) if G.number_of_nodes() > 0 else {}
+        
+        data_dict[pcap_file] = {'graphs': graphs, 'positions': positions}
+    
+    # Create the interactive Plotly Dash dashboard
+    app = dash.Dash(__name__)
+    
+    app.layout = html.Div([
+        html.H1("IP Communication Graph Dashboard"),
+        html.Div([
+            html.Label("Select PCAP File:"),
+            dcc.Dropdown(
+                id='pcap-dropdown',
+                options=[{'label': pcap_file, 'value': pcap_file} for pcap_file in pcap_files],
+                value=pcap_files[0],  # Default to the first PCAP file
+                style={'width': '50%'}
+            ),
+        ]),
+        html.Div([
+            html.Label("Select Filter:"),
+            dcc.Dropdown(
+                id='filter-dropdown',
+                options=[
+                    {'label': 'All', 'value': 'all'},
+                    {'label': 'External', 'value': 'external'},
+                    {'label': 'Internal', 'value': 'internal'}
+                ],
+                value='all',
+                style={'width': '50%'}
+            ),
+        ]),
+        dcc.Graph(id='graph')
+    ])
+    
+    @app.callback(
+        Output('graph', 'figure'),
+        [Input('pcap-dropdown', 'value'),
+         Input('filter-dropdown', 'value')]
+    )
+    def update_graph(selected_pcap, selected_filter):
+        graphs = data_dict[selected_pcap]['graphs']
+        positions = data_dict[selected_pcap]['positions']
+        G = graphs[selected_filter]
+        pos = positions[selected_filter]
+        return create_plotly_figure(G, pos)
+    
+    print("Starting Plotly Dash server. Open http://127.0.0.1:8050 in your browser to view the interactive dashboard.")
+    app.run(debug=False)
 
 if __name__ == "__main__":
-    # Set up argument parser for command-line arguments
     parser = argparse.ArgumentParser(description="Extract IP-to-IP communication from a PCAP file.")
-    parser.add_argument("pcap_file", help="Path to the PCAP file")
+    parser.add_argument("pcap_file", help="Path to the PCAP file for static outputs")
+    parser.add_argument("pcap_dir", help="Directory containing PCAP files for the dashboard")
     parser.add_argument("-packet_filter", choices=["internal", "external", "all"], default="all",
                         help="Filter for individual CSV files and static graph: 'internal' (both IPs private), 'external' (at least one IP public), 'all' (no filter)")
     
     args = parser.parse_args()
     
-    # Process the PCAP file with the specified filter
-    process_pcap(args.pcap_file, args.packet_filter)
+    process_pcap(args.pcap_file, args.packet_filter, args.pcap_dir)
